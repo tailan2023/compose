@@ -51,7 +51,11 @@ Deno.serve(async req=>{
         await db.from('companies').update({status}).eq('id',tenant);
       }
     }else if(event.type==='invoice.paid'||event.type==='invoice.payment_failed'){
-      const stripeSub=typeof o.subscription==='string'?o.subscription:null;
+      const stripeSub=typeof o.subscription==='string'
+        ? o.subscription
+        : typeof o.parent?.subscription_details?.subscription==='string'
+          ? o.parent.subscription_details.subscription
+          : null;
       if(stripeSub){
         const {data:sub}=await db.from('subscriptions').select('id,tenant_id,billing_currency').eq('stripe_subscription_id',stripeSub).maybeSingle();
         if(sub){
