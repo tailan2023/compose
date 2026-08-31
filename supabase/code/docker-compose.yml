@@ -228,7 +228,7 @@ services:
     image: supabase/storage-api:v1.22.17
     restart: unless-stopped
     volumes:
-      - storage-data:/var/lib/storage
+      - ./volumes/storage:/var/lib/storage:z
     healthcheck:
       test:
         [
@@ -482,4 +482,3 @@ services:
 
 volumes:
   db-config:
-  storage-data:
