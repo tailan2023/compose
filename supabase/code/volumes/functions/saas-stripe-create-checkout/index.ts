@@ -35,7 +35,7 @@ Deno.serve(async req => {
     if (!publishableKey) throw new Error('STRIPE_PUBLISHABLE_KEY ausente');
     const body = new URLSearchParams();
     body.set('mode','subscription');
-    body.set('ui_mode','embedded');
+    body.set('ui_mode','embedded_page');
     body.set('redirect_on_completion','never');
     body.set('payment_method_types[0]','card');
     body.set('client_reference_id',tenant_id);
@@ -58,7 +58,7 @@ Deno.serve(async req => {
     const trialEnd = subscription.trial_ends_at ? Math.floor(new Date(subscription.trial_ends_at).getTime()/1000) : 0;
     if (trialEnd > Math.floor(Date.now()/1000) + 60) body.set('subscription_data[trial_end]',String(trialEnd));
 
-    const session = await stripeForm('checkout/sessions',body,undefined,`saas-checkout-embedded-v1-${subscription.id}-${currency}`);
+    const session = await stripeForm('checkout/sessions',body,undefined,`saas-checkout-embedded-page-v2-${subscription.id}-${currency}`);
     await db.from('subscriptions').update({
       payment_provider:'stripe', billing_currency:currency, stripe_checkout_session_id:session.id
     }).eq('id',subscription.id);
