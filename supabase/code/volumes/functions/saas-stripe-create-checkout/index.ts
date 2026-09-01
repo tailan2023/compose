@@ -1,4 +1,3 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { admin, cors, json, secret, stripeForm } from '../_shared/common.ts';
 
 const zeroDecimal = new Set(['BIF','CLP','DJF','GNF','JPY','KMF','KRW','MGA','PYG','RWF','UGX','VND','VUV','XAF','XOF','XPF']);
@@ -6,15 +5,12 @@ const zeroDecimal = new Set(['BIF','CLP','DJF','GNF','JPY','KMF','KRW','MGA','PY
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
-    const auth = req.headers.get('authorization') || '';
-    const client = createClient(secret('SUPABASE_URL')!, secret('SUPABASE_ANON_KEY')!, {
-      global:{headers:{Authorization:auth}}, auth:{persistSession:false}
-    });
-    const {data:{user}} = await client.auth.getUser();
+    const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i,'');
+    const db = admin();
+    const {data:{user}} = await db.auth.getUser(token);
     if (!user) return json({error:'Sessão inválida.'},401);
 
     const {tenant_id} = await req.json();
-    const db = admin();
     const {data:profile} = await db.from('users').select('tenant_id,role').eq('id',user.id).maybeSingle();
     if (!profile || profile.tenant_id !== tenant_id || !['admin','owner'].includes(profile.role)) return json({error:'Acesso negado.'},403);
 
@@ -35,10 +31,13 @@ Deno.serve(async req => {
     if (!Number.isFinite(amount) || amount < 1) return json({error:'Valor da assinatura inválido.'},400);
 
     const dashboard = (secret('DASHBOARD_URL') || 'https://dashboard.cardapioplus.com').replace(/\/$/,'');
+    const publishableKey = secret('STRIPE_PUBLISHABLE_KEY');
+    if (!publishableKey) throw new Error('STRIPE_PUBLISHABLE_KEY ausente');
     const body = new URLSearchParams();
     body.set('mode','subscription');
-    body.set('success_url',`${dashboard}/?view=assinatura&billing=success&session_id={CHECKOUT_SESSION_ID}`);
-    body.set('cancel_url',`${dashboard}/?view=assinatura&billing=cancelled`);
+    body.set('ui_mode','embedded');
+    body.set('redirect_on_completion','never');
+    body.set('payment_method_types[0]','card');
     body.set('client_reference_id',tenant_id);
     body.set('metadata[tenant_id]',tenant_id);
     body.set('metadata[subscription_id]',subscription.id);
@@ -63,10 +62,9 @@ Deno.serve(async req => {
     await db.from('subscriptions').update({
       payment_provider:'stripe', billing_currency:currency, stripe_checkout_session_id:session.id
     }).eq('id',subscription.id);
-    return json({url:session.url});
+    return json({clientSecret:session.client_secret,publishableKey});
   } catch (e) {
     console.error(e);
     return json({error:e instanceof Error ? e.message : 'Não foi possível abrir a cobrança internacional.'},500);
   }
 });
-
