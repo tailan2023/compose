@@ -58,7 +58,7 @@ Deno.serve(async req => {
     const trialEnd = subscription.trial_ends_at ? Math.floor(new Date(subscription.trial_ends_at).getTime()/1000) : 0;
     if (trialEnd > Math.floor(Date.now()/1000) + 60) body.set('subscription_data[trial_end]',String(trialEnd));
 
-    const session = await stripeForm('checkout/sessions',body,undefined,`saas-checkout-${subscription.id}-${currency}`);
+    const session = await stripeForm('checkout/sessions',body,undefined,`saas-checkout-embedded-v1-${subscription.id}-${currency}`);
     await db.from('subscriptions').update({
       payment_provider:'stripe', billing_currency:currency, stripe_checkout_session_id:session.id
     }).eq('id',subscription.id);
