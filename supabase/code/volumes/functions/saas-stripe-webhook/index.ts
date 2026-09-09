@@ -61,12 +61,20 @@ Deno.serve(async req=>{
         if(sub){
           const paid=event.type==='invoice.paid';
           const due=o.due_date?new Date(o.due_date*1000).toISOString().slice(0,10):new Date().toISOString().slice(0,10);
-          await db.from('subscription_invoices').upsert({
-            subscription_id:sub.id,amount:Number(o.amount_due||0)/100,status:paid?'paid':'failed',due_date:due,
+          const invoicePayload={
+            tenant_id:sub.tenant_id,subscription_id:sub.id,amount:Number(o.amount_due||0)/100,status:paid?'paid':'failed',due_date:due,
             paid_at:paid?new Date((o.status_transitions?.paid_at||Math.floor(Date.now()/1000))*1000).toISOString():null,
             currency_code:String(o.currency||sub.billing_currency||'USD').toUpperCase(),payment_provider:'stripe',
             provider_invoice_id:o.id,hosted_invoice_url:o.hosted_invoice_url||null
-          },{onConflict:'provider_invoice_id'});
+          };
+          const {data:placeholder}=await db.from('subscription_invoices')
+            .select('id').eq('subscription_id',sub.id).eq('due_date',due)
+            .is('provider_invoice_id',null).in('status',['pending','failed']).limit(1).maybeSingle();
+          if(placeholder?.id){
+            await db.from('subscription_invoices').update(invoicePayload).eq('id',placeholder.id);
+          }else{
+            await db.from('subscription_invoices').upsert(invoicePayload,{onConflict:'provider_invoice_id'});
+          }
           const status=paid?'active':'payment_pending';
           await db.from('subscriptions').update({status}).eq('id',sub.id);
           await db.from('companies').update({status}).eq('id',sub.tenant_id);
