@@ -8,6 +8,7 @@
 //     destino(s) informado(s), sem mexer em nenhuma assinatura.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
+import { internationalPhone } from "../_shared/wa-common.ts";
 
 const supabaseAdmin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -45,18 +46,14 @@ async function sendEmail(settings: any, to: string, subject: string, bodyText: s
   await client.close();
 }
 
-function formatBrazilPhone(raw: string): string {
-  let digits = raw.replace(/\D/g, "");
-  if (digits.length <= 11) digits = "55" + digits;
-  return digits;
-}
-
-async function sendWhatsapp(settings: any, phone: string, text: string) {
+async function sendWhatsapp(settings: any, phone: string, text: string, countryCode = "BR") {
+  const number = internationalPhone(phone, countryCode);
+  if (!number) throw new Error("Número de WhatsApp ausente ou inválido.");
   const url = `${settings.whatsapp_evolution_url.replace(/\/$/, "")}/message/sendText/${settings.whatsapp_evolution_instance}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "apikey": settings.whatsapp_evolution_api_key },
-    body: JSON.stringify({ number: formatBrazilPhone(phone), text }),
+    body: JSON.stringify({ number, text }),
   });
   if (!res.ok) throw new Error(`Evolution API respondeu ${res.status}: ${await res.text()}`);
 }
@@ -86,28 +83,38 @@ Deno.serve(async (req) => {
         if (!settings.whatsapp_evolution_url || !settings.whatsapp_evolution_instance || !settings.whatsapp_evolution_api_key) {
           return json({ error: "Evolution API não configurada (URL, instância ou API Key faltando)." }, 400);
         }
-        await sendWhatsapp(settings, body.test_whatsapp, fillTemplate(settings.whatsapp_reminder_message, vars));
+        await sendWhatsapp(settings, body.test_whatsapp, fillTemplate(settings.whatsapp_reminder_message, vars), body.test_country || "BR");
         results.whatsapp = "enviado";
       }
       return json({ ok: true, message: "Teste enviado.", results });
     }
+
+    // Faz a transição do trial/ciclo vencido e cria a fatura antes de procurar
+    // destinatários. A função SQL é idempotente, então também pode ser chamada
+    // pelo cron e pelo painel sem duplicar faturas.
+    const { data: billingResult, error: billingError } = await supabaseAdmin.rpc("check_subscription_billing_status");
+    if (billingError) console.error("Erro ao processar vencimentos:", billingError);
 
     const daysBefore = settings.reminder_days_before || 3;
     const now = new Date();
     const windowEnd = new Date(now.getTime() + daysBefore * 86400000);
     const { data: subs } = await supabaseAdmin
       .from("subscriptions")
-      .select("id, status, billing_currency, current_period_start, current_period_end, trial_ends_at, last_reminder_sent_at, tenant_id, companies(name, email, whatsapp), plans(name, monthly_price, plan_prices(currency_code, monthly_price, is_active))")
-      .in("status", ["active", "trial", "payment_pending"]);
+      .select("id, status, billing_currency, current_period_start, current_period_end, trial_ends_at, last_reminder_sent_at, tenant_id, companies(name, email, whatsapp, country_code), plans(name, monthly_price, plan_prices(currency_code, monthly_price, is_active))")
+      .in("status", ["active", "trial", "payment_pending", "overdue"]);
 
     let sentCount = 0;
     const emailReady = !!settings.smtp_host;
     const whatsappReady = !!(settings.whatsapp_evolution_url && settings.whatsapp_evolution_instance && settings.whatsapp_evolution_api_key);
     for (const sub of subs || []) {
-      const relevantDate = sub.status === "trial" ? sub.trial_ends_at : sub.current_period_end;
+      const relevantDate = sub.status === "trial"
+        ? sub.trial_ends_at
+        : (sub.current_period_end || sub.trial_ends_at);
       if (!relevantDate) continue;
       const dueDate = new Date(relevantDate);
-      if (dueDate < now || dueDate > windowEnd) continue;
+      const isPastDue = dueDate <= now;
+      if (!isPastDue && dueDate > windowEnd) continue;
+      if (isPastDue && !["trial", "payment_pending", "overdue"].includes(sub.status)) continue;
       const cycleStart = sub.current_period_start ? new Date(sub.current_period_start) : new Date(0);
       if (sub.last_reminder_sent_at && new Date(sub.last_reminder_sent_at) > cycleStart) continue;
       const email = sub.companies?.email;
@@ -131,7 +138,12 @@ Deno.serve(async (req) => {
       }
       if (whatsappReady && whatsapp) {
         try {
-          await sendWhatsapp(settings, whatsapp, fillTemplate(settings.whatsapp_reminder_message, vars));
+          await sendWhatsapp(
+            settings,
+            whatsapp,
+            fillTemplate(settings.whatsapp_reminder_message, vars),
+            sub.companies?.country_code || "BR",
+          );
           anySent = true;
         } catch (err) { console.error(`Erro ao enviar WhatsApp pra ${whatsapp}:`, err); }
       }
@@ -140,7 +152,7 @@ Deno.serve(async (req) => {
         sentCount++;
       }
     }
-    return json({ ok: true, sent: sentCount });
+    return json({ ok: true, sent: sentCount, billing: billingResult || null, billing_error: billingError?.message || null });
   } catch (err) {
     console.error(err);
     return json({ error: "Erro inesperado ao processar lembretes." }, 500);
