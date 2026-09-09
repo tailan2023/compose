@@ -58,7 +58,16 @@ Deno.serve(async req => {
     const trialEnd = subscription.trial_ends_at ? Math.floor(new Date(subscription.trial_ends_at).getTime()/1000) : 0;
     if (trialEnd > Math.floor(Date.now()/1000) + 60) body.set('subscription_data[trial_end]',String(trialEnd));
 
-    const session = await stripeForm('checkout/sessions',body,undefined,`saas-checkout-embedded-page-v2-${subscription.id}-${currency}`);
+    // A chave antiga era fixa por assinatura/moeda. Quando o trial, preço ou
+    // outros parâmetros mudavam, a Stripe recusava a nova sessão por ela usar
+    // a mesma chave com um payload diferente. A chave abaixo inclui os dados
+    // que alteram o Checkout e uma janela curta: cliques repetidos no mesmo
+    // minuto continuam idempotentes, mas uma nova tentativa válida não colide
+    // com uma sessão criada anteriormente.
+    const requestWindow = Math.floor(Date.now() / 60000);
+    const priceReference = String(price.stripe_price_id || amount).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48);
+    const idempotencyKey = `saas-checkout-embedded-v3-${subscription.id}-${currency}-${priceReference}-${trialEnd || 0}-${requestWindow}`;
+    const session = await stripeForm('checkout/sessions',body,undefined,idempotencyKey);
     await db.from('subscriptions').update({
       payment_provider:'stripe', billing_currency:currency, stripe_checkout_session_id:session.id
     }).eq('id',subscription.id);
