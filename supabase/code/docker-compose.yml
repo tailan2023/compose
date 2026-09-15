@@ -39,8 +39,6 @@ services:
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
       AUTH_JWT_SECRET: ${JWT_SECRET}
-
-      LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:-your-super-secret-and-long-logflare-key}
       LOGFLARE_URL: http://analytics:4000
       NEXT_PUBLIC_ENABLE_LOGS: true
       NEXT_ANALYTICS_BACKEND_PROVIDER: postgres
@@ -372,8 +370,8 @@ services:
       timeout: 5s
       interval: 5s
       retries: 3
-    environment:
-    LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:}
+      environment:
+      LOGFLARE_API_KEY: ""
     command: [ "--config", "/etc/vector/vector.yml" ]
     security_opt:
       - "label=disable"
