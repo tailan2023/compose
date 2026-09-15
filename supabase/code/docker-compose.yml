@@ -303,7 +303,7 @@ services:
       DB_PORT: ${POSTGRES_PORT}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_SCHEMA: _analytics
-      LOGFLARE_API_KEY: ${LOGFLARE_API_KEY:-}
+      LOGFLARE_API_KEY: ""
       LOGFLARE_SINGLE_TENANT: true
       LOGFLARE_SUPABASE_MODE: true
       LOGFLARE_MIN_CLUSTER_SIZE: 1
@@ -351,8 +351,11 @@ services:
         "log_min_messages=fatal"
       ]
 
-    vector:
+  vector:
     image: timberio/vector:0.28.1-alpine
+    restart: unless-stopped
+    volumes:
+      - ./volumes/logs/vector.yml:/etc/vector/vector.yml:ro,z
     healthcheck:
       test:
         [
@@ -371,6 +374,7 @@ services:
     command: [ "--config", "/etc/vector/vector.yml" ]
     security_opt:
       - "label=disable"
+
   supavisor:
     image: supabase/supavisor:2.5.1
     restart: unless-stopped
