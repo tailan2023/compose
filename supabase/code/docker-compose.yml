@@ -351,12 +351,8 @@ services:
         "log_min_messages=fatal"
       ]
 
-  vector:
+    vector:
     image: timberio/vector:0.28.1-alpine
-    restart: unless-stopped
-    volumes:
-      - ./volumes/logs/vector.yml:/etc/vector/vector.yml:ro,z
-      - ${DOCKER_SOCKET_LOCATION}:/var/run/docker.sock:ro,z
     healthcheck:
       test:
         [
@@ -370,12 +366,11 @@ services:
       timeout: 5s
       interval: 5s
       retries: 3
-      environment:
+    environment:
       LOGFLARE_API_KEY: ""
     command: [ "--config", "/etc/vector/vector.yml" ]
     security_opt:
       - "label=disable"
-
   supavisor:
     image: supabase/supavisor:2.5.1
     restart: unless-stopped
