@@ -358,7 +358,7 @@ services:
         "log_min_messages=fatal" # prevents Realtime polling queries from appearing in logs
       ]
 
-  vector:
+   vector:
     image: timberio/vector:0.28.1-alpine
     restart: unless-stopped
     volumes:
@@ -377,11 +377,9 @@ services:
       timeout: 5s
       interval: 5s
       retries: 3
-    environment:
     command: [ "--config", "/etc/vector/vector.yml" ]
     security_opt:
       - "label=disable"
-
   # Update the DATABASE_URL if you are using an external Postgres database
   supavisor:
     image: supabase/supavisor:2.5.1
