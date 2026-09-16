@@ -285,6 +285,19 @@ services:
   meta:
     image: supabase/postgres-meta:v0.89.0
     restart: unless-stopped
+    # Use IPv4 explicitly: the service listens on 0.0.0.0, not ::1.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health', {signal: AbortSignal.timeout(4000)}).then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         # Disable this if you are using an external Postgres database
