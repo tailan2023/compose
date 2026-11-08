@@ -45,7 +45,7 @@ async function requireConnector(req: Request) {
 async function createMissingJobs(connector: any) {
   const { data: company } = await admin.from('companies').select('name,currency_code').eq('id', connector.tenant_id).single();
   const { data: orders, error } = await admin.from('orders')
-    .select('id,order_number,created_at,table_name,fulfillment_type,guest_name,customer_notes,delivery_address,subtotal,delivery_fee,total,payment_method,status,customers(name,whatsapp),order_items(*)')
+    .select('id,order_number,created_at,table_name,fulfillment_type,guest_name,customer_notes,delivery_address,subtotal,delivery_fee,total,payment_method,status,vat_rate,customers(name,whatsapp),order_items(*)')
     .eq('tenant_id', connector.tenant_id)
     .gte('created_at', connector.created_at)
     .not('status', 'in', '(cancelled,payment_pending)')
@@ -53,8 +53,13 @@ async function createMissingJobs(connector: any) {
   if (error) throw error;
   if (!orders?.length) return;
   const orderIds = orders.map((o: any) => o.id);
-  const { data: existing } = await admin.from('printer_jobs').select('order_id').in('order_id', orderIds);
-  const done = new Set((existing || []).map((x: any) => x.order_id));
+  const { data: existing, error: existingError } = await admin.from('printer_jobs').select('order_id,payload').in('order_id', orderIds);
+  if (existingError) throw existingError;
+  const jobsByOrder = new Map<string, any[]>();
+  for (const job of existing || []) {
+    const list = jobsByOrder.get(job.order_id) || [];
+    list.push(job); jobsByOrder.set(job.order_id, list);
+  }
 
   const productIds = [...new Set(orders.flatMap((o: any) => (o.order_items || []).map((i: any) => i.product_id)).filter(Boolean))];
   const categoryByProduct = new Map<string, string>();
@@ -63,18 +68,33 @@ async function createMissingJobs(connector: any) {
     for (const product of products || []) categoryByProduct.set(product.id, (product as any).categories?.name || '');
   }
 
-  const rows = orders.filter((o: any) => !done.has(o.id)).map((o: any) => ({
-    tenant_id: connector.tenant_id, order_id: o.id,
-    payload: {
+  const rows: any[] = [];
+  for (const o of orders as any[]) {
+    const allItems = o.order_items || [];
+    if (!allItems.length) continue;
+    const previousJobs = jobsByOrder.get(o.id) || [];
+    const coveredItemIds = new Set(previousJobs.flatMap((job: any) => (job.payload?.items || []).map((item: any) => item.id).filter(Boolean)));
+    const items = previousJobs.length ? allItems.filter((item: any) => item.id && !coveredItemIds.has(item.id)) : allItems;
+    if (!items.length) continue;
+    const isAddition = previousJobs.length > 0;
+    const itemIds = items.map((item: any) => String(item.id)).sort();
+    const additionTotal = items.reduce((sum: number, item: any) => sum + Number(item.line_total || 0), 0);
+    rows.push({
+      tenant_id: connector.tenant_id, order_id: o.id,
+      job_type: isAddition ? 'addition' : 'order',
+      job_key: isAddition ? `addition:${o.id}:${itemIds.join(',')}` : `order:${o.id}`,
+      payload: {
       company_name: company?.name || '', currency_code: company?.currency_code || 'BRL', order_number: String(o.order_number), created_at: o.created_at,
       table_name: o.table_name, fulfillment_type: o.fulfillment_type, customer_name: o.customers?.name || o.guest_name || null,
       customer_whatsapp: o.customers?.whatsapp || null, customer_notes: o.customer_notes, delivery_address: o.delivery_address,
-      subtotal: o.subtotal || 0, delivery_fee: o.delivery_fee || 0, total: o.total || 0, payment_method: o.payment_method,
-      items: (o.order_items || []).map((i: any) => ({ ...i, category_name: categoryByProduct.get(i.product_id) || '' })),
-    },
-  }));
+      subtotal: isAddition ? additionTotal : (o.subtotal || 0), delivery_fee: isAddition ? 0 : (o.delivery_fee || 0), total: isAddition ? additionTotal : (o.total || 0), payment_method: o.payment_method,
+      vat_rate: o.vat_rate || 0, is_addition: isAddition,
+      items: items.map((i: any) => ({ ...i, category_name: categoryByProduct.get(i.product_id) || '' })),
+      },
+    });
+  }
   if (rows.length) {
-    const { error: insertError } = await admin.from('printer_jobs').upsert(rows, { onConflict: 'order_id', ignoreDuplicates: true });
+    const { error: insertError } = await admin.from('printer_jobs').upsert(rows, { onConflict: 'tenant_id,job_key', ignoreDuplicates: true });
     if (insertError) throw insertError;
   }
 }
